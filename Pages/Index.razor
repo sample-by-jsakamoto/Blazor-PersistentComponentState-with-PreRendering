@@ -1,0 +1,50 @@
+﻿@page "/"
+@implements IDisposable
+@inject ILogger<Index> Logger
+@inject GitHubService GitHubService
+@inject PersistentComponentState PersistentState
+
+<h1>Stargazers count: @_stars</h1>
+
+@code
+{
+    private int? _stars;
+
+    private PersistingComponentStateSubscription persistingSubscription;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // At first, try to load the stargazers count from the persistent state synchronously.
+        // (It will succeed only when the app is running in a browser. This part doesn't work in prerendering.)
+        if (this.PersistentState.TryTakeFromJson<int>("stargazers", out var persistedStars))
+        {
+            _stars = persistedStars;
+            this.Logger.LogInformation("Loaded stargazers count from persistent state");
+        }
+
+        // If it's not there... (usually when the app is running in prerendering)
+        else
+        {
+            // Load it from the GitHub API.
+            var (success, stars) = await GitHubService.GetStargazersCountAsync("ILoveDotNet", "ilovedotnet");
+            if (!success) throw new Exception("Failed to get stargazers count");
+
+            _stars = stars;
+            this.Logger.LogInformation("Loaded stargazers count from GitHub");
+
+            // And persist it for the next time.
+            this.persistingSubscription = this.PersistentState.RegisterOnPersisting(() =>
+            {
+                // This part of the code will be executed when the "dotnet publish" command is run.
+                this.PersistentState.PersistAsJson("stargazers", stars);
+                this.Logger.LogInformation("Persisted stargazers count");
+                return Task.CompletedTask;
+            });
+        }
+    }
+
+    public void Dispose()
+    {
+        this.persistingSubscription.Dispose();
+    }
+}
